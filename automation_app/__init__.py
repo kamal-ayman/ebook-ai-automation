@@ -1,0 +1,1 @@
+"""Quiz automation application package."""
