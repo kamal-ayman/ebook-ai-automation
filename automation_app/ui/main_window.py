@@ -18,8 +18,8 @@ class MainWindow:
     def __init__(self) -> None:
         self._root = tk.Tk()
         self._root.title("Quiz Automation App")
-        self._root.geometry("920x700")
-        self._root.minsize(860, 620)
+        self._root.geometry("920x800")
+        self._root.minsize(860, 700)
 
         self._message_queue: Queue[tuple[str, str]] = Queue()
         self._worker_thread: threading.Thread | None = None
@@ -27,12 +27,11 @@ class MainWindow:
         self._is_running = False
 
         self.login_url_var = tk.StringVar(value="https://ebook.bu.edu.eg/login/index.php")
-        self.quiz_url_var = tk.StringVar(value="https://ebook.bu.edu.eg/mod/quiz/attempt.php?attempt=597320&cmid=44914&page=43")
-        self.username_var = tk.StringVar(value="30209060102598")
-        self.password_var = tk.StringVar(value="123123123")
-        self.api_key_var = tk.StringVar(value="AIzaSyBM2opzmYegsJq_g9EPi6n1AYPhfjeNrJg")
+        self.username_var = tk.StringVar(value="30404281401376")
+        self.password_var = tk.StringVar(value="abdonwar123")
+        self.api_key_var = tk.StringVar(value="AIzaSyALSb_Hu-LqoXzeTI1GYdF5lmgtzbqLkZQ")
         self.model_var = tk.StringVar(value="gemini-3.1-flash-lite-preview")
-        self.max_pages_var = tk.StringVar(value="65")
+        self.max_pages_var = tk.StringVar(value="200")
         self.headless_var = tk.BooleanVar(value=False)
         self.keep_browser_open_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value=RunStatus.IDLE.value)
@@ -40,6 +39,7 @@ class MainWindow:
         self._start_btn: tk.Button
         self._stop_btn: tk.Button
         self._log_box: ScrolledText
+        self._quiz_urls_text: tk.Text
 
         self._build_ui()
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -56,7 +56,10 @@ class MainWindow:
         form_frame.pack(fill="x")
 
         self._add_labeled_entry(form_frame, 0, "Login URL", self.login_url_var)
-        self._add_labeled_entry(form_frame, 1, "Quiz URL", self.quiz_url_var)
+        self._quiz_urls_text = self._add_labeled_text(form_frame, 1, "Quiz URLs\n(one per line)")
+        # Set default value for convenience
+        self._quiz_urls_text.insert("1.0", "https://ebook.bu.edu.eg/mod/quiz/attempt.php?attempt=702552&cmid=43126")
+        
         self._add_labeled_entry(form_frame, 2, "Username", self.username_var)
         self._add_labeled_entry(form_frame, 3, "Password", self.password_var, show="*")
         self._add_labeled_entry(form_frame, 4, "Gemini API Key", self.api_key_var, show="*")
@@ -112,6 +115,23 @@ class MainWindow:
 
         parent.grid_columnconfigure(1, weight=1)
 
+    def _add_labeled_text(
+        self,
+        parent: tk.Widget,
+        row: int,
+        label_text: str,
+        height: int = 4,
+        width: int = 80,
+    ) -> tk.Text:
+        label = tk.Label(parent, text=label_text, anchor="w")
+        label.grid(row=row, column=0, sticky="nw", padx=(0, 8), pady=4)
+
+        text = tk.Text(parent, height=height, width=width, font=("TkDefaultFont", 10))
+        text.grid(row=row, column=1, sticky="ew", pady=4)
+
+        parent.grid_columnconfigure(1, weight=1)
+        return text
+
     def _start_automation(self) -> None:
         if self._is_running:
             return
@@ -122,9 +142,12 @@ class MainWindow:
             messagebox.showerror("Invalid input", "Max pages must be a valid integer.")
             return
 
+        raw_urls = self._quiz_urls_text.get("1.0", "end-1c").strip().splitlines()
+        quiz_urls = [u.strip() for u in raw_urls if u.strip()]
+
         config = AutomationConfig(
             login_url=self.login_url_var.get().strip(),
-            quiz_url=self.quiz_url_var.get().strip(),
+            quiz_urls=quiz_urls,
             username=self.username_var.get().strip(),
             password=self.password_var.get(),
             gemini_api_key=self.api_key_var.get().strip(),
@@ -161,10 +184,30 @@ class MainWindow:
         self._append_log(stamp("Stop requested by user."))
 
     def _run_automation_worker(self, config: AutomationConfig) -> None:
-        orchestrator = QuizAutomationOrchestrator(log=self._enqueue_worker_log)
-        status = orchestrator.run(config, self._stop_event)
+        threads = []
 
-        self._message_queue.put(("status", status.value))
+        def run_one(url: str) -> None:
+            # Extract a short ID for logs
+            import re
+            match = re.search(r"attempt=(\d+)", url)
+            attempt_id = match.group(1) if match else url[-8:]
+            prefix = f"[Attempt {attempt_id}] "
+
+            def thread_log(msg: str) -> None:
+                self._enqueue_worker_log(prefix + msg)
+
+            orchestrator = QuizAutomationOrchestrator(log=thread_log)
+            orchestrator.run(config, self._stop_event, quiz_url=url)
+
+        for url in config.quiz_urls:
+            t = threading.Thread(target=run_one, args=(url,), daemon=True)
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
+
+        self._message_queue.put(("status", RunStatus.COMPLETED.value))
         self._message_queue.put(("done", ""))
 
     def _enqueue_worker_log(self, message: str) -> None:

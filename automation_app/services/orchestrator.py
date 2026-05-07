@@ -16,11 +16,16 @@ class QuizAutomationOrchestrator:
     def __init__(self, log: Callable[[str], None]) -> None:
         self._log = log
 
-    def run(self, config: AutomationConfig, stop_event: threading.Event) -> RunStatus:
+    def run(self, config: AutomationConfig, stop_event: threading.Event, quiz_url: str | None = None) -> RunStatus:
         try:
             config.validate()
         except ValueError as exc:
             self._log(f"Configuration error: {exc}")
+            return RunStatus.FAILED
+
+        target_url = quiz_url or (config.quiz_urls[0] if config.quiz_urls else None)
+        if not target_url:
+            self._log("No quiz URL provided.")
             return RunStatus.FAILED
 
         browser_service = BrowserService(config, self._log)
@@ -44,8 +49,8 @@ class QuizAutomationOrchestrator:
             if stop_event.is_set():
                 return RunStatus.STOPPED
 
-            self._log("Opening quiz link...")
-            driver.get(config.quiz_url)
+            self._log(f"Opening quiz link: {target_url}")
+            driver.get(target_url)
 
             page_count = 0
             while not stop_event.is_set():

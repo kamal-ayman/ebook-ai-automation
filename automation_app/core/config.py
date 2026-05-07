@@ -10,7 +10,7 @@ class AutomationConfig:
     login_url: str
     username: str
     password: str
-    quiz_url: str
+    quiz_urls: list[str]
     gemini_api_key: str
     gemini_model: str = "gemini-3.1-flash-lite-preview"
     headless: bool = False
@@ -21,8 +21,8 @@ class AutomationConfig:
     def validate(self) -> None:
         if not self.login_url.strip():
             raise ValueError("Login URL is required.")
-        if not self.quiz_url.strip():
-            raise ValueError("Quiz URL is required.")
+        if not self.quiz_urls:
+            raise ValueError("At least one Quiz URL is required.")
         if not self.username.strip():
             raise ValueError("Username is required.")
         if not self.password:
